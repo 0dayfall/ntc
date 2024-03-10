@@ -19,6 +19,49 @@ defmodule JsonTcpClient do
     {:ok, %{socket: socket}}
   end
 
+  def handle_call(:login, _from, state) do
+    session_key = state.session_key  # Assuming your GenServer state holds the session key
+    # `get_state` could be part of the state or passed as an argument, adjust as needed
+    get_state = state.get_state  # Or set to `nil` or a default value as required
+
+    case send_login(session_key, get_state) do
+      {:ok, json_data} ->
+        # Assuming you have a function like `send_data` to send through the GenServer
+        {:ok, _response} = send_data(json_data, state)
+        {:reply, :ok, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  # GenServer callback to handle the send data operation
+  def handle_call({:send_data, data}, _from, %{socket: socket} = state) do
+    case :gen_tcp.send(socket, data) do
+      :ok ->
+        {:reply, :ok, state}  # Successfully sent data
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}  # Handle errors appropriately
+    end
+  end
+
+  defp send_login(session_key, get_state \\ nil) do
+    login_args = %{
+      "session_key" => session_key,
+      "get_state" => get_state
+    }
+    |> Enum.filter(fn {_k, v} -> !is_nil(v) end)
+    |> Map.new()
+
+    feed_cmd = %{
+      "cmd" => "login",
+      "args" => login_args
+    }
+
+    Jason.encode(feed_cmd)
+    # Don’t actually send the data here; just return the JSON to be sent
+  end
+
+  # Implement or place your existing send_data function here
   def handle_info({:tcp, _socket, data}, %{socket: socket} = state) do
     case Jason.decode(data) do
       {:ok, %{"type" => message_type, "data" => message_data}} ->
@@ -78,6 +121,11 @@ defmodule JsonTcpClient do
     :inet.setopts(socket, active: :once)
   end
 
+  # Public API function to send data
+  def send_data(pid, data) do
+    GenServer.call(pid, {:send_data, data})
+  end
+
   # Handle the TCP connection closing
   def handle_info({:tcp_closed, _socket}, state) do
     IO.puts("TCP connection closed by the server, attempting to reconnect...")
@@ -105,7 +153,4 @@ defmodule JsonTcpClient do
         {:noreply, state}
     end
   end
-
-  # Handling TCP connection closed and error
-  # Implement your handle_info definitions for :tcp_closed and :tcp_error here
 end
